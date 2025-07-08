@@ -950,6 +950,7 @@ func TestFinishReason(t *testing.T) {
 	}
 }
 
+<<<<<<< HEAD
 func TestChatCompletionRequest_MarshalJSON_LargeImage_Base64(t *testing.T) {
 	// generate 20 mb of random data
 	imageData := generateEncodedData(t, 20*1024*1024)
@@ -1043,5 +1044,144 @@ func encodeImage(t *testing.T, mimeType string, data []byte) []byte {
 	if err != nil {
 		t.Fatalf("Failed to encode image: %v", err)
 	}
-	return buf.Bytes()
+	return fmt.Sprintf("data:%s;base64,%s", mimeType, buf.String())
+}
+
+func TestChatCompletionResponseFormatJSONSchema_UnmarshalJSON(t *testing.T) {
+	type args struct {
+		data []byte
+	}
+	tests := []struct {
+		name    string
+		args    args
+		wantErr bool
+	}{
+		{
+			"",
+			args{
+				data: []byte(`{
+      "name":   "math_response",
+      "strict": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "explanation": { "type": "string" },
+                "output":      { "type": "string" }
+              },
+              "required": ["explanation","output"],
+              "additionalProperties": false
+            }
+          },
+          "final_answer": { "type": "string" }
+        },
+        "required": ["steps","final_answer"],
+        "additionalProperties": false
+      }
+  }`),
+			},
+			false,
+		},
+		{
+			"",
+			args{
+				data: []byte(`{
+      "name":   "math_response",
+      "strict": true,
+      "schema": null
+  }`),
+			},
+			false,
+		},
+		{
+			"",
+			args{
+				data: []byte(`[123,456]`),
+			},
+			true,
+		},
+		{
+			"",
+			args{
+				data: []byte(`{
+      "name":   "math_response",
+      "strict": true,
+      "schema": 123456
+  }`),
+			},
+			true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var r openai.ChatCompletionResponseFormatJSONSchema
+			err := r.UnmarshalJSON(tt.args.data)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("UnmarshalJSON() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestChatCompletionRequest_UnmarshalJSON(t *testing.T) {
+	type args struct {
+		bs []byte
+	}
+	tests := []struct {
+		name    string
+		args    args
+		wantErr bool
+	}{
+		{
+			"",
+			args{bs: []byte(`{
+  "model": "llama3-1b",
+  "messages": [
+    { "role": "system", "content": "You are a helpful math tutor." },
+    { "role": "user",   "content": "solve 8x + 31 = 2" }
+  ],
+  "response_format": {
+    "type": "json_schema",
+    "json_schema": {
+      "name":   "math_response",
+      "strict": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "explanation": { "type": "string" },
+                "output":      { "type": "string" }
+              },
+              "required": ["explanation","output"],
+              "additionalProperties": false
+            }
+          },
+          "final_answer": { "type": "string" }
+        },
+        "required": ["steps","final_answer"],
+        "additionalProperties": false
+      }
+    }
+  }
+}`)},
+			false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var m openai.ChatCompletionRequest
+			err := json.Unmarshal(tt.args.bs, &m)
+			if err != nil {
+				t.Errorf("UnmarshalJSON() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
 }
