@@ -1297,5 +1297,3 @@ func TestChatCompletionRequest_UnmarshalJSON(t *testing.T) {
 		})
 	}
 }
-
-
