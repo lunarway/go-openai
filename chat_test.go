@@ -334,6 +334,126 @@ func TestO3ModelsChatCompletionsBetaLimitations(t *testing.T) {
 	}
 }
 
+func TestGPT5ModelsChatCompletionsBetaLimitations(t *testing.T) {
+	tests := []struct {
+		name          string
+		in            openai.ChatCompletionRequest
+		expectedError error
+	}{
+		{
+			name: "log_probs_unsupported",
+			in: openai.ChatCompletionRequest{
+				MaxCompletionTokens: 1000,
+				LogProbs:            true,
+				Model:               openai.GPT5,
+			},
+			expectedError: openai.ErrReasoningModelLimitationsLogprobs,
+		},
+		{
+			name: "set_temperature_unsupported",
+			in: openai.ChatCompletionRequest{
+				MaxCompletionTokens: 1000,
+				Model:               openai.GPT5Mini,
+				Messages: []openai.ChatCompletionMessage{
+					{
+						Role: openai.ChatMessageRoleUser,
+					},
+					{
+						Role: openai.ChatMessageRoleAssistant,
+					},
+				},
+				Temperature: float32(2),
+			},
+			expectedError: openai.ErrReasoningModelLimitationsOther,
+		},
+		{
+			name: "set_top_unsupported",
+			in: openai.ChatCompletionRequest{
+				MaxCompletionTokens: 1000,
+				Model:               openai.GPT5Nano,
+				Messages: []openai.ChatCompletionMessage{
+					{
+						Role: openai.ChatMessageRoleUser,
+					},
+					{
+						Role: openai.ChatMessageRoleAssistant,
+					},
+				},
+				Temperature: float32(1),
+				TopP:        float32(0.1),
+			},
+			expectedError: openai.ErrReasoningModelLimitationsOther,
+		},
+		{
+			name: "set_n_unsupported",
+			in: openai.ChatCompletionRequest{
+				MaxCompletionTokens: 1000,
+				Model:               openai.GPT5ChatLatest,
+				Messages: []openai.ChatCompletionMessage{
+					{
+						Role: openai.ChatMessageRoleUser,
+					},
+					{
+						Role: openai.ChatMessageRoleAssistant,
+					},
+				},
+				Temperature: float32(1),
+				TopP:        float32(1),
+				N:           2,
+			},
+			expectedError: openai.ErrReasoningModelLimitationsOther,
+		},
+		{
+			name: "set_presence_penalty_unsupported",
+			in: openai.ChatCompletionRequest{
+				MaxCompletionTokens: 1000,
+				Model:               openai.GPT5,
+				Messages: []openai.ChatCompletionMessage{
+					{
+						Role: openai.ChatMessageRoleUser,
+					},
+					{
+						Role: openai.ChatMessageRoleAssistant,
+					},
+				},
+				PresencePenalty: float32(0.1),
+			},
+			expectedError: openai.ErrReasoningModelLimitationsOther,
+		},
+		{
+			name: "set_frequency_penalty_unsupported",
+			in: openai.ChatCompletionRequest{
+				MaxCompletionTokens: 1000,
+				Model:               openai.GPT5Mini,
+				Messages: []openai.ChatCompletionMessage{
+					{
+						Role: openai.ChatMessageRoleUser,
+					},
+					{
+						Role: openai.ChatMessageRoleAssistant,
+					},
+				},
+				FrequencyPenalty: float32(0.1),
+			},
+			expectedError: openai.ErrReasoningModelLimitationsOther,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := openai.DefaultConfig("whatever")
+			config.BaseURL = "http://localhost/v1"
+			client := openai.NewClientWithConfig(config)
+			ctx := context.Background()
+
+			_, err := client.CreateChatCompletion(ctx, tt.in)
+			checks.HasError(t, err)
+			msg := fmt.Sprintf("CreateChatCompletion should return wrong model error, returned: %s", err)
+			checks.ErrorIs(t, err, tt.expectedError, msg)
+		})
+	}
+}
+
 func TestChatRequestOmitEmpty(t *testing.T) {
 	data, err := json.Marshal(openai.ChatCompletionRequest{
 		// We set model b/c it's required, so omitempty doesn't make sense
@@ -1025,16 +1145,9 @@ func generateRequestWithImage(imageURL any) openai.ChatCompletionRequest {
 	return req
 }
 
-func encodeImage(t *testing.T, mimeType string, data []byte) []byte {
-	encodedLength := base64.StdEncoding.EncodedLen(len(data))
-	buf := bytes.NewBuffer(make([]byte, 0, 13+len(mimeType)+encodedLength))
-
-	buf.WriteString(`data:`)
-	buf.WriteString(mimeType)
-	buf.WriteString(`;base64,`)
-
-	// base64 encode data and write it to the buffer
-	encoder := base64.NewEncoder(base64.StdEncoding, buf)
+func encodeImage(t *testing.T, mimeType string, data []byte) string {
+	var buf bytes.Buffer
+	encoder := base64.NewEncoder(base64.StdEncoding, &buf)
 	_, err := encoder.Write(data)
 	if err != nil {
 		t.Fatalf("Failed to encode image: %v", err)
@@ -1043,5 +1156,144 @@ func encodeImage(t *testing.T, mimeType string, data []byte) []byte {
 	if err != nil {
 		t.Fatalf("Failed to encode image: %v", err)
 	}
-	return buf.Bytes()
+	return fmt.Sprintf("data:%s;base64,%s", mimeType, buf.String())
+}
+
+func TestChatCompletionResponseFormatJSONSchema_UnmarshalJSON(t *testing.T) {
+	type args struct {
+		data []byte
+	}
+	tests := []struct {
+		name    string
+		args    args
+		wantErr bool
+	}{
+		{
+			"",
+			args{
+				data: []byte(`{
+      "name":   "math_response",
+      "strict": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "explanation": { "type": "string" },
+                "output":      { "type": "string" }
+              },
+              "required": ["explanation","output"],
+              "additionalProperties": false
+            }
+          },
+          "final_answer": { "type": "string" }
+        },
+        "required": ["steps","final_answer"],
+        "additionalProperties": false
+      }
+  }`),
+			},
+			false,
+		},
+		{
+			"",
+			args{
+				data: []byte(`{
+      "name":   "math_response",
+      "strict": true,
+      "schema": null
+  }`),
+			},
+			false,
+		},
+		{
+			"",
+			args{
+				data: []byte(`[123,456]`),
+			},
+			true,
+		},
+		{
+			"",
+			args{
+				data: []byte(`{
+      "name":   "math_response",
+      "strict": true,
+      "schema": 123456
+  }`),
+			},
+			true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var r openai.ChatCompletionResponseFormatJSONSchema
+			err := r.UnmarshalJSON(tt.args.data)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("UnmarshalJSON() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestChatCompletionRequest_UnmarshalJSON(t *testing.T) {
+	type args struct {
+		bs []byte
+	}
+	tests := []struct {
+		name    string
+		args    args
+		wantErr bool
+	}{
+		{
+			"",
+			args{bs: []byte(`{
+  "model": "llama3-1b",
+  "messages": [
+    { "role": "system", "content": "You are a helpful math tutor." },
+    { "role": "user",   "content": "solve 8x + 31 = 2" }
+  ],
+  "response_format": {
+    "type": "json_schema",
+    "json_schema": {
+      "name":   "math_response",
+      "strict": true,
+      "schema": {
+        "type": "object",
+        "properties": {
+          "steps": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "explanation": { "type": "string" },
+                "output":      { "type": "string" }
+              },
+              "required": ["explanation","output"],
+              "additionalProperties": false
+            }
+          },
+          "final_answer": { "type": "string" }
+        },
+        "required": ["steps","final_answer"],
+        "additionalProperties": false
+      }
+    }
+  }
+}`)},
+			false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var m openai.ChatCompletionRequest
+			err := json.Unmarshal(tt.args.bs, &m)
+			if err != nil {
+				t.Errorf("UnmarshalJSON() error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
 }
